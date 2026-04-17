@@ -204,7 +204,7 @@ def render_sidebar():
 
 def main():
     render_sidebar()
-    st.title("💼 GongZuo")
+    st.title("GongZuo")
 
     # ── Run scraper button ────────────────────────────────────────────────────
     col_btn, col_info = st.columns([2, 3])
