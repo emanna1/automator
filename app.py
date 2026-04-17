@@ -1,5 +1,5 @@
 """
-Job Search Dashboard — Emilie Quillet
+GongZuo — Emilie Quillet
 Run: streamlit run app.py
 """
 
@@ -14,7 +14,7 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(
-    page_title="Job Search — Emilie",
+    page_title="GongZuo — Emilie",
     page_icon="💼",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -204,7 +204,7 @@ def render_sidebar():
 
 def main():
     render_sidebar()
-    st.title("💼 Job Search Dashboard")
+    st.title("💼 GongZuo")
 
     # ── Run scraper button ────────────────────────────────────────────────────
     col_btn, col_info = st.columns([2, 3])
