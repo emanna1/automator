@@ -15,7 +15,7 @@ import streamlit as st
 
 st.set_page_config(
     page_title="GongZuo — Emilie",
-    page_icon="💼",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -58,7 +58,7 @@ def _process_job(job: dict, settings: dict, status) -> dict:
     cover_text = ""
     cl_path = ""
     try:
-        status.text(f"Writing cover letter — {title} @ {company}…")
+        status.text(f"Processing — {title} @ {company}…")
         cover_text = generate_cover_letter(title, company, description, location)
         cl_path = str(folder / "cover_letter.docx")
         save_cover_letter_docx(cover_text, cl_path)
@@ -71,7 +71,7 @@ def _process_job(job: dict, settings: dict, status) -> dict:
     base_cv = settings.get("cv_path", "")
     if base_cv and Path(base_cv).exists():
         try:
-            status.text(f"Extracting ATS keywords — {title} @ {company}…")
+            status.text(f"Optimising — {title} @ {company}…")
             keywords = extract_ats_keywords(title, description)
             cv_path_out = str(folder / "cv_modified.docx")
             inject_ats_keywords(base_cv, keywords, cv_path_out)
@@ -92,7 +92,7 @@ def run_pipeline(settings: dict, progress_bar, status) -> dict:
     seen = load_seen_jobs()
     df = load_tracker()
 
-    status.text("Contacting job boards…")
+    status.text("Fetching data…")
 
     def _cb(pct: float, msg: str):
         progress_bar.progress(min(pct * 0.45, 0.45))
@@ -145,7 +145,7 @@ def render_sidebar():
         st.title("⚙️ Settings")
         settings = load_settings()
 
-        with st.expander("CV & Search", expanded=True):
+        with st.expander("Documents", expanded=True):
             cv_path = st.text_input(
                 "Base CV path (.docx)",
                 value=settings.get("cv_path", ""),
@@ -162,12 +162,12 @@ def render_sidebar():
             )
             sites_options = ["linkedin", "indeed", "glassdoor"]
             sites_sel = st.multiselect(
-                "Job boards",
+                "Sources",
                 sites_options,
                 default=[s for s in settings.get("sites", sites_options) if s in sites_options],
             )
 
-        with st.expander("Search terms", expanded=False):
+        with st.expander("Keywords", expanded=False):
             terms_text = st.text_area(
                 "One per line",
                 value="\n".join(settings.get("search_terms", [])),
@@ -204,12 +204,10 @@ def render_sidebar():
 
 def main():
     render_sidebar()
-    st.title("GongZuo")
 
-    # ── Run scraper button ────────────────────────────────────────────────────
     col_btn, col_info = st.columns([2, 3])
     with col_btn:
-        run_pressed = st.button("▶  Run Scraper", type="primary", use_container_width=True)
+        run_pressed = st.button("▶  Refresh", type="primary", use_container_width=True)
 
     if run_pressed:
         settings = load_settings()
@@ -238,24 +236,24 @@ def main():
 
         if saved > 0:
             st.success(
-                f"Last scrape — **{found}** jobs found on boards, "
-                f"**{new}** were new, **{saved}** written to tracker."
+                f"Last refresh — **{found}** entries found, "
+                f"**{new}** were new, **{saved}** added."
             )
         elif found > 0 and new == 0:
             st.info(
-                f"Last scrape — **{found}** jobs found, all already seen. "
+                f"Last refresh — **{found}** entries found, all already seen. "
                 "No new entries added."
             )
         elif found == 0 and not errors:
             st.warning(
-                "Last scrape returned 0 jobs. "
+                "Last refresh returned 0 results. "
                 "Try increasing **Max age (hours)** or check your VPN/network."
             )
         else:
-            st.warning(f"Last scrape — **{found}** jobs found, **{saved}** saved.")
+            st.warning(f"Last refresh — **{found}** entries found, **{saved}** saved.")
 
         if errors:
-            with st.expander(f"⚠️ {len(errors)} scrape error(s) — click to expand"):
+            with st.expander(f"⚠️ {len(errors)} error(s) — click to expand"):
                 for e in errors:
                     st.code(e)
 
@@ -263,7 +261,7 @@ def main():
     df = load_tracker()
 
     if df.empty:
-        st.info("No jobs yet. Click **Run Scraper** to start.")
+        st.info("No entries yet. Click **Refresh** to start.")
         return
 
     # ── Stats ─────────────────────────────────────────────────────────────────
@@ -273,8 +271,8 @@ def main():
     new_today = df["scraped_at"].str[:10].eq(today).sum()
 
     m1, m2, m3 = st.columns(3)
-    m1.metric("Total jobs", total)
-    m2.metric("Applied", int(applied))
+    m1.metric("Total", total)
+    m2.metric("Sent", int(applied))
     m3.metric("New today", int(new_today))
 
     st.divider()
@@ -282,17 +280,17 @@ def main():
     # ── Filters ───────────────────────────────────────────────────────────────
     fc1, fc2, fc3 = st.columns(3)
     with fc1:
-        f_status = st.selectbox("Status", ["All", "Not applied", "Applied"])
+        f_status = st.selectbox("Status", ["All", "Pending", "Sent"])
     with fc2:
         sites_in_data = sorted(df["site"].replace("", pd.NA).dropna().unique().tolist())
-        f_site = st.selectbox("Site", ["All"] + sites_in_data)
+        f_site = st.selectbox("Source", ["All"] + sites_in_data)
     with fc3:
         f_search = st.text_input("Search title / company", "")
 
     view = df.copy().reset_index(drop=True)
-    if f_status == "Applied":
+    if f_status == "Sent":
         view = view[view["applied"].apply(_is_applied)]
-    elif f_status == "Not applied":
+    elif f_status == "Pending":
         view = view[~view["applied"].apply(_is_applied)]
     if f_site != "All":
         view = view[view["site"] == f_site]
@@ -314,7 +312,7 @@ def main():
         .fillna(table_df["scraped_at"].str[:16])
     )
 
-    st.subheader(f"Jobs ({len(table_df)})")
+    st.subheader(f"Entries ({len(table_df)})")
     event = st.dataframe(
         table_df,
         use_container_width=True,
@@ -326,15 +324,15 @@ def main():
             "company":     st.column_config.TextColumn("Company", width="medium"),
             "location":    st.column_config.TextColumn("Location", width="small"),
             "date_posted": st.column_config.TextColumn("Posted", width="small"),
-            "site":        st.column_config.TextColumn("Site", width="small"),
-            "applied":     st.column_config.CheckboxColumn("Applied", width="small"),
+            "site":        st.column_config.TextColumn("Source", width="small"),
+            "applied":     st.column_config.CheckboxColumn("Sent", width="small"),
             "scraped_at":  st.column_config.TextColumn("Scraped", width="small"),
         },
     )
 
     # ── Detail panel ─────────────────────────────────────────────────────────
     if not (event.selection and event.selection.rows):
-        st.caption("Click a row to see the cover letter and download files.")
+        st.caption("Click a row to see details.")
         return
 
     idx = event.selection.rows[0]
@@ -360,14 +358,14 @@ def main():
         # Job URL
         url = job.get("job_url", "")
         if url:
-            st.link_button("🔗 View posting", url)
+            st.link_button("🔗 View", url)
 
         # Download modified CV
         cv_p = str(job.get("cv_path", ""))
         if cv_p and Path(cv_p).exists():
             with open(cv_p, "rb") as f:
                 st.download_button(
-                    "📄 Download CV (ATS)",
+                    "📄 Download CV",
                     data=f.read(),
                     file_name=f"CV_{_safe_filename(job['company'])}.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -383,14 +381,14 @@ def main():
         if cl_p and Path(cl_p).exists():
             with open(cl_p, "rb") as f:
                 st.download_button(
-                    "📝 Download cover letter",
+                    "📝 Download letter",
                     data=f.read(),
                     file_name=f"CoverLetter_{_safe_filename(job['company'])}.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 )
 
         st.divider()
-        st.caption(f"Site: {job.get('site', '—')}")
+        st.caption(f"Source: {job.get('site', '—')}")
         st.caption(f"Posted: {job.get('date_posted', '—')}")
         st.caption(f"Scraped: {str(job.get('scraped_at', ''))[:16]}")
         st.caption(f"Search term: {job.get('search_term', '—')}")
@@ -399,7 +397,7 @@ def main():
         cover_text = str(job.get("cover_letter_text", "")).strip()
 
         if cover_text and not cover_text.startswith("[Error"):
-            st.subheader("Cover Letter")
+            st.subheader("Letter")
             st.markdown(
                 f"""<div style="
                     background:#f8f9fb;border-radius:8px;padding:20px 24px;
@@ -413,18 +411,18 @@ def main():
             st.warning(cover_text)
             _regen_button(job, left)
         else:
-            st.info("No cover letter generated yet.")
+            st.info("No letter generated yet.")
             _regen_button(job, left)
 
         # Show JD excerpt
         desc = str(job.get("description", "")).strip()
         if desc and desc != "nan":
-            with st.expander("Job description", expanded=False):
+            with st.expander("Details", expanded=False):
                 st.text(desc[:3000])
 
 
 def _regen_button(job, col):
-    if st.button("🔄 Generate cover letter now", key=f"regen_{job['job_url']}"):
+    if st.button("🔄 Generate letter", key=f"regen_{job['job_url']}"):
         settings = load_settings()
         with st.spinner("Generating…"):
             try:
