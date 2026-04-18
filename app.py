@@ -27,7 +27,7 @@ from tracker import (
     update_applied, update_files,
     COLUMNS,
 )
-from scraper import scrape_all
+from scraper import scrape_all, get_tier
 from cover_letter import generate_cover_letter, extract_ats_keywords
 from cv_processor import inject_ats_keywords, save_cover_letter_docx, job_folder
 
@@ -278,7 +278,7 @@ def main():
     st.divider()
 
     # ── Filters ───────────────────────────────────────────────────────────────
-    fc1, fc2, fc3 = st.columns(3)
+    fc1, fc2, fc3, fc4 = st.columns(4)
     with fc1:
         f_status = st.selectbox("Status", ["All", "Pending", "Processed"])
     with fc2:
@@ -288,8 +288,12 @@ def main():
         f_site = _SITE_REVERSE.get(f_site_display, f_site_display)
     with fc3:
         f_search = st.text_input("Filter", "")
+    with fc4:
+        f_tier = st.selectbox("Tier", ["All", "Tier 1 only", "Other only"])
 
     view = df.copy().reset_index(drop=True)
+    view["tier"] = view["company"].apply(get_tier)
+
     if f_status == "Processed":
         view = view[view["applied"].apply(_is_applied)]
     elif f_status == "Pending":
@@ -302,10 +306,14 @@ def main():
             view["company"].str.contains(f_search, case=False, na=False)
         )
         view = view[mask]
+    if f_tier == "Tier 1 only":
+        view = view[view["tier"] == "★ Tier 1"]
+    elif f_tier == "Other only":
+        view = view[view["tier"] == ""]
     view = view.reset_index(drop=True)
 
     # ── Table ─────────────────────────────────────────────────────────────────
-    table_cols = ["title", "company", "location", "date_posted", "site", "applied", "scraped_at"]
+    table_cols = ["tier", "title", "company", "location", "date_posted", "site", "applied", "scraped_at"]
     table_df = view[[c for c in table_cols if c in view.columns]].copy()
     table_df["applied"] = table_df["applied"].apply(_is_applied)
     table_df["scraped_at"] = (
@@ -322,6 +330,7 @@ def main():
         selection_mode="single-row",
         on_select="rerun",
         column_config={
+            "tier":        st.column_config.TextColumn("Tier", width="small"),
             "title":       st.column_config.TextColumn("Title", width="medium"),
             "company":     st.column_config.TextColumn("Organisation", width="medium"),
             "location":    st.column_config.TextColumn("Region", width="small"),
@@ -386,6 +395,9 @@ def main():
                 )
 
         st.divider()
+        tier_label = get_tier(str(job.get("company", "")))
+        if tier_label:
+            st.caption(tier_label)
         st.caption(f"Origin: {_SITE_DISPLAY.get(job.get('site', ''), job.get('site', '—'))}")
         st.caption(f"Date: {job.get('date_posted', '—')}")
         st.caption(f"Updated: {str(job.get('scraped_at', ''))[:16]}")
