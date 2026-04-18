@@ -32,6 +32,12 @@ from cover_letter import generate_cover_letter, extract_ats_keywords
 from cv_processor import inject_ats_keywords, save_cover_letter_docx, job_folder
 
 
+# ── site display mapping ──────────────────────────────────────────────────────
+
+_SITE_DISPLAY = {"linkedin": "Source A", "indeed": "Source B", "glassdoor": "Source C"}
+_SITE_REVERSE = {v: k for k, v in _SITE_DISPLAY.items()}
+
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def _safe_filename(s: str, max_len: int = 30) -> str:
@@ -153,11 +159,12 @@ def render_sidebar():
                 value=int(settings.get("results_per_search", 15))
             )
             sites_options = ["linkedin", "indeed", "glassdoor"]
-            sites_sel = st.multiselect(
+            sites_sel_display = st.multiselect(
                 "Sources",
-                sites_options,
-                default=[s for s in settings.get("sites", sites_options) if s in sites_options],
+                [_SITE_DISPLAY[s] for s in sites_options],
+                default=[_SITE_DISPLAY[s] for s in settings.get("sites", sites_options) if s in _SITE_DISPLAY],
             )
+            sites_sel = [_SITE_REVERSE[d] for d in sites_sel_display]
 
         with st.expander("Filters", expanded=False):
             terms_text = st.text_area(
@@ -276,7 +283,9 @@ def main():
         f_status = st.selectbox("Status", ["All", "Pending", "Processed"])
     with fc2:
         sites_in_data = sorted(df["site"].replace("", pd.NA).dropna().unique().tolist())
-        f_site = st.selectbox("Origin", ["All"] + sites_in_data)
+        sites_display_opts = [_SITE_DISPLAY.get(s, s) for s in sites_in_data]
+        f_site_display = st.selectbox("Origin", ["All"] + sites_display_opts)
+        f_site = _SITE_REVERSE.get(f_site_display, f_site_display)
     with fc3:
         f_search = st.text_input("Filter", "")
 
@@ -377,7 +386,7 @@ def main():
                 )
 
         st.divider()
-        st.caption(f"Origin: {job.get('site', '—')}")
+        st.caption(f"Origin: {_SITE_DISPLAY.get(job.get('site', ''), job.get('site', '—'))}")
         st.caption(f"Date: {job.get('date_posted', '—')}")
         st.caption(f"Updated: {str(job.get('scraped_at', ''))[:16]}")
         st.caption(f"Ref: {job.get('search_term', '—')}")
