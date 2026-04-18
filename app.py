@@ -1,5 +1,5 @@
 """
-GongZuo — Emilie Quillet
+GongZuo DongXi — Emilie Quillet
 Run: streamlit run app.py
 """
 
@@ -14,8 +14,8 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(
-    page_title="GongZuo — Emilie",
-    page_icon="📊",
+    page_title="GongZuo DongXi",
+    page_icon="🗂️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -45,7 +45,6 @@ def _is_applied(val) -> bool:
 # ── core pipeline ─────────────────────────────────────────────────────────────
 
 def _process_job(job: dict, settings: dict, status) -> dict:
-    """Generate cover letter + modified CV for one job. Returns updated job dict."""
     title = job.get("title", "Unknown Role")
     company = job.get("company", "Unknown Company")
     description = job.get("description", "")
@@ -54,7 +53,6 @@ def _process_job(job: dict, settings: dict, status) -> dict:
 
     folder = job_folder(company, title, date_str)
 
-    # Cover letter
     cover_text = ""
     cl_path = ""
     try:
@@ -63,10 +61,9 @@ def _process_job(job: dict, settings: dict, status) -> dict:
         cl_path = str(folder / "cover_letter.docx")
         save_cover_letter_docx(cover_text, cl_path)
     except Exception as e:
-        cover_text = f"[Error generating cover letter: {e}]"
+        cover_text = f"[Error generating document: {e}]"
         cl_path = ""
 
-    # Modified CV
     cv_path_out = ""
     base_cv = settings.get("cv_path", "")
     if base_cv and Path(base_cv).exists():
@@ -77,18 +74,13 @@ def _process_job(job: dict, settings: dict, status) -> dict:
             inject_ats_keywords(base_cv, keywords, cv_path_out)
         except Exception as e:
             cv_path_out = ""
-            st.warning(f"CV processing failed for {company}: {e}")
+            st.warning(f"File processing failed for {company}: {e}")
 
     return {**job, "cover_letter_text": cover_text,
             "cover_letter_path": cl_path, "cv_path": cv_path_out}
 
 
 def run_pipeline(settings: dict, progress_bar, status) -> dict:
-    """
-    Runs full scrape + process pipeline.
-    Returns a result dict: {found, new, errors, saved}
-    so the caller can persist it in session_state.
-    """
     seen = load_seen_jobs()
     df = load_tracker()
 
@@ -138,26 +130,26 @@ def run_pipeline(settings: dict, progress_bar, status) -> dict:
     }
 
 
-# ── sidebar: settings ─────────────────────────────────────────────────────────
+# ── sidebar: options ──────────────────────────────────────────────────────────
 
 def render_sidebar():
     with st.sidebar:
-        st.title("⚙️ Settings")
+        st.title("⚙️ Options")
         settings = load_settings()
 
-        with st.expander("Documents", expanded=True):
+        with st.expander("Config", expanded=True):
             cv_path = st.text_input(
-                "Base CV path (.docx)",
+                "Base file path",
                 value=settings.get("cv_path", ""),
-                help="Full path to CV Emilie Quillet v15.docx",
+                help="Full path to base .docx file",
             )
-            location = st.text_input("Location", value=settings.get("location", "Luxembourg"))
+            location = st.text_input("Region", value=settings.get("location", "Luxembourg"))
             hours_old = st.number_input(
-                "Max age (hours)", min_value=1, max_value=168,
+                "Range (hrs)", min_value=1, max_value=168,
                 value=int(settings.get("hours_old", 24))
             )
             results_n = st.number_input(
-                "Results per search term", min_value=1, max_value=50,
+                "Limit", min_value=1, max_value=50,
                 value=int(settings.get("results_per_search", 15))
             )
             sites_options = ["linkedin", "indeed", "glassdoor"]
@@ -167,14 +159,14 @@ def render_sidebar():
                 default=[s for s in settings.get("sites", sites_options) if s in sites_options],
             )
 
-        with st.expander("Keywords", expanded=False):
+        with st.expander("Filters", expanded=False):
             terms_text = st.text_area(
                 "One per line",
                 value="\n".join(settings.get("search_terms", [])),
                 height=240,
             )
 
-        if st.button("💾 Save Settings", use_container_width=True, type="primary"):
+        if st.button("💾 Save", use_container_width=True, type="primary"):
             new_settings = {
                 "cv_path": cv_path.strip(),
                 "location": location.strip(),
@@ -195,26 +187,27 @@ def render_sidebar():
 
         base_cv = settings.get("cv_path", "")
         if base_cv and Path(base_cv).exists():
-            st.success("CV file: found ✓")
+            st.success("Base file: found ✓")
         else:
-            st.warning("CV file not found — check path above")
+            st.warning("Base file not found — check path above")
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
 def main():
     render_sidebar()
+    st.header("🗂️ GongZuo DongXi")
 
     col_btn, col_info = st.columns([2, 3])
     with col_btn:
-        run_pressed = st.button("▶  Refresh", type="primary", use_container_width=True)
+        run_pressed = st.button("▶  Sync", type="primary", use_container_width=True)
 
     if run_pressed:
         settings = load_settings()
         if not settings.get("search_terms"):
-            st.error("Add search terms in Settings first.")
+            st.error("Configure filters in Options first.")
         elif not settings.get("sites"):
-            st.error("Select at least one job board in Settings.")
+            st.error("Select at least one source in Options.")
         else:
             prog = st.progress(0)
             status = st.empty()
@@ -222,35 +215,35 @@ def main():
                 result = run_pipeline(settings, prog, status)
                 status.empty()
                 prog.empty()
-                st.session_state["last_scrape"] = result
+                st.session_state["last_sync"] = result
                 st.rerun()
             except Exception:
-                st.error("Scraper crashed — see details below.")
+                st.error("Sync failed — see details below.")
                 st.code(traceback.format_exc())
 
-    # ── Persistent scrape result banner (survives the rerun) ─────────────────
-    if "last_scrape" in st.session_state:
-        r = st.session_state["last_scrape"]
+    # ── Persistent result banner ──────────────────────────────────────────────
+    if "last_sync" in st.session_state:
+        r = st.session_state["last_sync"]
         found, new, saved = r["found"], r["new"], r["saved"]
         errors = r.get("errors", [])
 
         if saved > 0:
             st.success(
-                f"Last refresh — **{found}** entries found, "
+                f"Last sync — **{found}** entries retrieved, "
                 f"**{new}** were new, **{saved}** added."
             )
         elif found > 0 and new == 0:
             st.info(
-                f"Last refresh — **{found}** entries found, all already seen. "
+                f"Last sync — **{found}** entries retrieved, all already seen. "
                 "No new entries added."
             )
         elif found == 0 and not errors:
             st.warning(
-                "Last refresh returned 0 results. "
-                "Try increasing **Max age (hours)** or check your VPN/network."
+                "Last sync returned 0 results. "
+                "Try increasing **Range (hrs)** or check your VPN/network."
             )
         else:
-            st.warning(f"Last refresh — **{found}** entries found, **{saved}** saved.")
+            st.warning(f"Last sync — **{found}** entries retrieved, **{saved}** saved.")
 
         if errors:
             with st.expander(f"⚠️ {len(errors)} error(s) — click to expand"):
@@ -261,34 +254,34 @@ def main():
     df = load_tracker()
 
     if df.empty:
-        st.info("No entries yet. Click **Refresh** to start.")
+        st.info("No entries. Click **Sync** to begin.")
         return
 
     # ── Stats ─────────────────────────────────────────────────────────────────
     total = len(df)
-    applied = df["applied"].apply(_is_applied).sum()
+    processed = df["applied"].apply(_is_applied).sum()
     today = datetime.now().strftime("%Y-%m-%d")
     new_today = df["scraped_at"].str[:10].eq(today).sum()
 
     m1, m2, m3 = st.columns(3)
     m1.metric("Total", total)
-    m2.metric("Sent", int(applied))
-    m3.metric("New today", int(new_today))
+    m2.metric("Processed", int(processed))
+    m3.metric("Recent", int(new_today))
 
     st.divider()
 
     # ── Filters ───────────────────────────────────────────────────────────────
     fc1, fc2, fc3 = st.columns(3)
     with fc1:
-        f_status = st.selectbox("Status", ["All", "Pending", "Sent"])
+        f_status = st.selectbox("Status", ["All", "Pending", "Processed"])
     with fc2:
         sites_in_data = sorted(df["site"].replace("", pd.NA).dropna().unique().tolist())
-        f_site = st.selectbox("Source", ["All"] + sites_in_data)
+        f_site = st.selectbox("Origin", ["All"] + sites_in_data)
     with fc3:
-        f_search = st.text_input("Search title / company", "")
+        f_search = st.text_input("Filter", "")
 
     view = df.copy().reset_index(drop=True)
-    if f_status == "Sent":
+    if f_status == "Processed":
         view = view[view["applied"].apply(_is_applied)]
     elif f_status == "Pending":
         view = view[~view["applied"].apply(_is_applied)]
@@ -302,7 +295,7 @@ def main():
         view = view[mask]
     view = view.reset_index(drop=True)
 
-    # ── Jobs table ────────────────────────────────────────────────────────────
+    # ── Table ─────────────────────────────────────────────────────────────────
     table_cols = ["title", "company", "location", "date_posted", "site", "applied", "scraped_at"]
     table_df = view[[c for c in table_cols if c in view.columns]].copy()
     table_df["applied"] = table_df["applied"].apply(_is_applied)
@@ -321,12 +314,12 @@ def main():
         on_select="rerun",
         column_config={
             "title":       st.column_config.TextColumn("Title", width="medium"),
-            "company":     st.column_config.TextColumn("Company", width="medium"),
-            "location":    st.column_config.TextColumn("Location", width="small"),
-            "date_posted": st.column_config.TextColumn("Posted", width="small"),
-            "site":        st.column_config.TextColumn("Source", width="small"),
-            "applied":     st.column_config.CheckboxColumn("Sent", width="small"),
-            "scraped_at":  st.column_config.TextColumn("Scraped", width="small"),
+            "company":     st.column_config.TextColumn("Organisation", width="medium"),
+            "location":    st.column_config.TextColumn("Region", width="small"),
+            "date_posted": st.column_config.TextColumn("Date", width="small"),
+            "site":        st.column_config.TextColumn("Origin", width="small"),
+            "applied":     st.column_config.CheckboxColumn("Processed", width="small"),
+            "scraped_at":  st.column_config.TextColumn("Updated", width="small"),
         },
     )
 
@@ -346,63 +339,59 @@ def main():
     left, right = st.columns([3, 1])
 
     with right:
-        # Applied toggle
         cur_applied = _is_applied(job.get("applied", "False"))
-        new_applied = st.checkbox("✅ Applied", value=cur_applied, key=f"chk_{job['job_url']}")
+        new_applied = st.checkbox("✅ Mark as processed", value=cur_applied, key=f"chk_{job['job_url']}")
         if new_applied != cur_applied:
             update_applied(job["job_url"], new_applied)
             st.rerun()
 
         st.write("")
 
-        # Job URL
         url = job.get("job_url", "")
         if url:
-            st.link_button("🔗 View", url)
+            st.link_button("🔗 Open", url)
 
-        # Download modified CV
         cv_p = str(job.get("cv_path", ""))
         if cv_p and Path(cv_p).exists():
             with open(cv_p, "rb") as f:
                 st.download_button(
-                    "📄 Download CV",
+                    "📄 File A",
                     data=f.read(),
-                    file_name=f"CV_{_safe_filename(job['company'])}.docx",
+                    file_name=f"FileA_{_safe_filename(job['company'])}.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 )
         else:
             if not load_settings().get("cv_path"):
-                st.caption("Set CV path in Settings to enable ATS injection.")
+                st.caption("Set base file path in Options to enable processing.")
             else:
-                st.caption("Modified CV not generated yet.")
+                st.caption("File A not generated yet.")
 
-        # Download cover letter docx
         cl_p = str(job.get("cover_letter_path", ""))
         if cl_p and Path(cl_p).exists():
             with open(cl_p, "rb") as f:
                 st.download_button(
-                    "📝 Download letter",
+                    "📝 File B",
                     data=f.read(),
-                    file_name=f"CoverLetter_{_safe_filename(job['company'])}.docx",
+                    file_name=f"FileB_{_safe_filename(job['company'])}.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 )
 
         st.divider()
-        st.caption(f"Source: {job.get('site', '—')}")
-        st.caption(f"Posted: {job.get('date_posted', '—')}")
-        st.caption(f"Scraped: {str(job.get('scraped_at', ''))[:16]}")
-        st.caption(f"Search term: {job.get('search_term', '—')}")
+        st.caption(f"Origin: {job.get('site', '—')}")
+        st.caption(f"Date: {job.get('date_posted', '—')}")
+        st.caption(f"Updated: {str(job.get('scraped_at', ''))[:16]}")
+        st.caption(f"Ref: {job.get('search_term', '—')}")
 
     with left:
         cover_text = str(job.get("cover_letter_text", "")).strip()
 
         if cover_text and not cover_text.startswith("[Error"):
-            st.subheader("Letter")
+            st.subheader("Note")
             st.markdown(
                 f"""<div style="
-                    background:#f8f9fb;border-radius:8px;padding:20px 24px;
-                    font-family:Georgia,serif;font-size:14px;line-height:1.7;
-                    white-space:pre-wrap;border:1px solid #e0e4ea;">
+                    background:#f4f5f7;border-radius:6px;padding:20px 24px;
+                    font-family:ui-monospace,monospace;font-size:13px;line-height:1.7;
+                    white-space:pre-wrap;border:1px solid #dde1e7;color:#3a3f47;">
 {html.escape(cover_text)}
                 </div>""",
                 unsafe_allow_html=True,
@@ -411,18 +400,17 @@ def main():
             st.warning(cover_text)
             _regen_button(job, left)
         else:
-            st.info("No letter generated yet.")
+            st.info("No note generated yet.")
             _regen_button(job, left)
 
-        # Show JD excerpt
         desc = str(job.get("description", "")).strip()
         if desc and desc != "nan":
-            with st.expander("Details", expanded=False):
+            with st.expander("Summary", expanded=False):
                 st.text(desc[:3000])
 
 
 def _regen_button(job, col):
-    if st.button("🔄 Generate letter", key=f"regen_{job['job_url']}"):
+    if st.button("🔄 Generate", key=f"regen_{job['job_url']}"):
         settings = load_settings()
         with st.spinner("Generating…"):
             try:
