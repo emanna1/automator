@@ -192,7 +192,7 @@ ALWAYS:
 Return only the cover letter text. No preamble, no explanation."""
 
     msg = client.messages.create(
-        model="claude-opus-4-5",
+        model="claude-opus-4-7",
         max_tokens=900,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -214,7 +214,7 @@ Description:
 {jd}"""
 
     msg = client.messages.create(
-        model="claude-opus-4-5",
+        model="claude-opus-4-7",
         max_tokens=300,
         messages=[{"role": "user", "content": prompt}],
     )

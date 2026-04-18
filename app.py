@@ -67,7 +67,7 @@ def _process_job(job: dict, settings: dict, status) -> dict:
         cl_path = str(folder / "cover_letter.docx")
         save_cover_letter_docx(cover_text, cl_path)
     except Exception as e:
-        cover_text = f"[Error generating document: {e}]"
+        cover_text = f"[Error generating document: {type(e).__name__}: {e}]"
         cl_path = ""
 
     cv_path_out = ""
@@ -435,7 +435,7 @@ def _regen_button(job, col):
                 update_files(job["job_url"], cover_letter_text=text, cover_letter_path=cl_path)
                 st.rerun()
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"{type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":
