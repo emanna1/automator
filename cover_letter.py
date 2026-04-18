@@ -1,5 +1,16 @@
 import os
+import httpx
 import anthropic
+
+
+def _make_client() -> anthropic.Anthropic:
+    return anthropic.Anthropic(
+        api_key=os.environ.get("ANTHROPIC_API_KEY"),
+        http_client=httpx.Client(
+            proxy=None,
+            transport=httpx.HTTPTransport(proxy=None),
+        ),
+    )
 
 EMILIE_PROFILE = """
 CURRENT SITUATION:
@@ -135,7 +146,7 @@ def _detect_tone(company: str) -> str:
 
 
 def generate_cover_letter(title: str, company: str, description: str, location: str = "Luxembourg") -> str:
-    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+    client = _make_client()
     tone = _detect_tone(company)
     jd = description[:3500] if description else "No description provided."
 
@@ -202,7 +213,7 @@ Return only the cover letter text. No preamble, no explanation."""
 def extract_ats_keywords(title: str, description: str) -> list:
     if not description or description == "nan":
         return []
-    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+    client = _make_client()
     jd = description[:3500]
 
     prompt = f"""Extract the most important ATS keywords from this job description.
