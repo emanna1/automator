@@ -4,6 +4,7 @@ Run: streamlit run app.py
 """
 
 import html
+import hashlib
 import os
 import re
 import traceback
@@ -29,7 +30,10 @@ from tracker import (
 )
 from scraper import scrape_all, get_tier
 from cover_letter import generate_cover_letter, extract_ats_keywords
-from cv_processor import inject_ats_keywords, save_cover_letter_docx, job_folder
+from cv_processor import (
+    inject_ats_keywords, save_cover_letter_docx, job_folder,
+    check_base_cv, copy_base_cv_to_temp, url_hash, MARKER,
+)
 
 
 # ── site display mapping ──────────────────────────────────────────────────────
@@ -50,14 +54,16 @@ def _is_applied(val) -> bool:
 
 # ── core pipeline ─────────────────────────────────────────────────────────────
 
-def _process_job(job: dict, settings: dict, status) -> dict:
-    title = job.get("title", "Unknown Role")
-    company = job.get("company", "Unknown Company")
+def _process_job(job: dict, settings: dict, status, temp_cv_path: str = "") -> dict:
+    title       = job.get("title", "Unknown Role")
+    company     = job.get("company", "Unknown Company")
     description = job.get("description", "")
-    location = job.get("location", settings.get("location", "Luxembourg"))
-    date_str = str(job.get("date_posted", datetime.now().strftime("%Y-%m-%d")))[:10].replace("-", "")
+    location    = job.get("location", settings.get("location", "Luxembourg"))
+    job_url     = job.get("job_url", "")
+    date_str    = str(job.get("date_posted", datetime.now().strftime("%Y-%m-%d")))[:10].replace("-", "")
+    uhash       = url_hash(job_url) if job_url else ""
 
-    folder = job_folder(company, title, date_str)
+    folder = job_folder(company, title, date_str, uhash)
 
     cover_text = ""
     cl_path = ""
@@ -71,16 +77,20 @@ def _process_job(job: dict, settings: dict, status) -> dict:
         cl_path = ""
 
     cv_path_out = ""
-    base_cv = settings.get("cv_path", "")
+    base_cv = temp_cv_path or settings.get("cv_path", "")
     if base_cv and Path(base_cv).exists():
         try:
             status.text(f"Optimising — {title} @ {company}…")
             keywords = extract_ats_keywords(title, description)
             cv_path_out = str(folder / "cv_modified.docx")
-            inject_ats_keywords(base_cv, keywords, cv_path_out)
+            diag = inject_ats_keywords(base_cv, keywords, cv_path_out)
+            # Store diagnostics in session state keyed by job URL
+            if "cv_diagnostics" not in st.session_state:
+                st.session_state["cv_diagnostics"] = {}
+            st.session_state["cv_diagnostics"][job_url] = diag
         except Exception as e:
             cv_path_out = ""
-            st.warning(f"File processing failed for {company}: {e}")
+            st.warning(f"File processing failed for {company}: {type(e).__name__}: {e}")
 
     return {**job, "cover_letter_text": cover_text,
             "cover_letter_path": cl_path, "cv_path": cv_path_out}
@@ -89,6 +99,15 @@ def _process_job(job: dict, settings: dict, status) -> dict:
 def run_pipeline(settings: dict, progress_bar, status) -> dict:
     seen = load_seen_jobs()
     df = load_tracker()
+
+    # Copy base CV to local temp once per run to avoid OneDrive locking
+    base_cv = settings.get("cv_path", "")
+    temp_cv = ""
+    if base_cv and Path(base_cv).exists():
+        try:
+            temp_cv = copy_base_cv_to_temp(base_cv)
+        except Exception as e:
+            st.warning(f"Could not copy base CV to temp ({type(e).__name__}): {e}")
 
     status.text("Fetching data…")
 
@@ -115,7 +134,7 @@ def run_pipeline(settings: dict, progress_bar, status) -> dict:
         new_rows = []
         for i, job in enumerate(new_jobs):
             progress_bar.progress(0.45 + (i / total_new) * 0.54)
-            processed = _process_job(job, settings, status)
+            processed = _process_job(job, settings, status, temp_cv_path=temp_cv)
             processed["applied"] = "False"
             processed["scraped_at"] = datetime.now().isoformat()
             new_rows.append({col: str(processed.get(col, "")) for col in COLUMNS})
@@ -193,8 +212,20 @@ def render_sidebar():
             st.error("ANTHROPIC_API_KEY not set in environment")
 
         base_cv = settings.get("cv_path", "")
-        if base_cv and Path(base_cv).exists():
-            st.success("Base file: found ✓")
+        if base_cv:
+            cv_check = check_base_cv(base_cv)
+            if not cv_check["exists"]:
+                st.warning("Base file not found — check path above")
+            elif not cv_check["readable"]:
+                st.error(f"Base file unreadable: {cv_check['error']}")
+            elif not cv_check["has_marker"]:
+                st.success("Base file: found ✓")
+                st.warning(
+                    f"Marker missing — open the base CV in Word and replace "
+                    f"the placeholder line text with exactly: `{MARKER}`"
+                )
+            else:
+                st.success("Base file: found ✓  |  marker: found ✓")
         else:
             st.warning("Base file not found — check path above")
 
@@ -403,6 +434,22 @@ def main():
         st.caption(f"Updated: {str(job.get('scraped_at', ''))[:16]}")
         st.caption(f"Ref: {job.get('search_term', '—')}")
 
+        # CV generation diagnostics (only available for jobs processed this session)
+        diag = st.session_state.get("cv_diagnostics", {}).get(str(job.get("job_url", "")))
+        if diag:
+            with st.expander("⚙️ Diagnostics", expanded=False):
+                v = diag.get("verification", {})
+                status_icon = "✓" if v.get("passed") else "✗"
+                st.caption(f"Verification: {status_icon} {'passed' if v.get('passed') else 'FAILED'}")
+                st.caption(f"Source: {Path(diag['base_cv_path']).name}  ({diag['file_size_source']} B)")
+                st.caption(f"Output: {diag['file_size_output']} B  |  {diag['paragraph_count']} paragraphs")
+                st.caption(f"Marker found: {'✓' if diag['marker_found'] else '✗ NOT FOUND'}")
+                st.caption(f"Keywords injected: {diag['keywords_count']}")
+                st.caption(f"Attempts: {diag['attempts']}")
+                if not v.get("passed"):
+                    failed = [k for k, val in v.items() if k != "passed" and not val]
+                    st.caption(f"Failed checks: {', '.join(failed)}")
+
     with left:
         cover_text = str(job.get("cover_letter_text", "")).strip()
 
@@ -441,7 +488,8 @@ def _regen_button(job, col):
                     job.get("location", "Luxembourg"),
                 )
                 date_str = str(job.get("date_posted", ""))[:10].replace("-", "")
-                folder = job_folder(job["company"], job["title"], date_str)
+                uhash = url_hash(str(job.get("job_url", "")))
+                folder = job_folder(job["company"], job["title"], date_str, uhash)
                 cl_path = str(folder / "cover_letter.docx")
                 save_cover_letter_docx(text, cl_path)
                 update_files(job["job_url"], cover_letter_text=text, cover_letter_path=cl_path)
