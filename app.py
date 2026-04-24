@@ -29,6 +29,7 @@ from tracker import (
     COLUMNS,
 )
 from scraper import scrape_all, get_tier
+from screener import screen_job
 from cover_letter import generate_cover_letter, extract_ats_keywords
 from cv_processor import (
     inject_ats_keywords, save_cover_letter_docx, job_folder,
@@ -134,7 +135,27 @@ def run_pipeline(settings: dict, progress_bar, status) -> dict:
         new_rows = []
         for i, job in enumerate(new_jobs):
             progress_bar.progress(0.45 + (i / total_new) * 0.54)
-            processed = _process_job(job, settings, status, temp_cv_path=temp_cv)
+
+            # Screen the job before expensive processing
+            status.text(f"Screening — {job['title']} @ {job['company']}…")
+            screen = screen_job(
+                job["title"], job["company"],
+                job.get("description", ""), job.get("location", ""),
+            )
+            job["ai_verdict"]    = screen.get("verdict",    "ACCEPT")
+            job["ai_confidence"] = screen.get("confidence", "LOW")
+            job["ai_reason"]     = screen.get("reason",     "")
+            job["ai_tier"]       = screen.get("tier",       "Other")
+            job["ai_flag"]       = screen.get("flag",       "")
+
+            if job["ai_verdict"] == "REJECT":
+                processed = {
+                    **job,
+                    "cover_letter_text": "", "cover_letter_path": "", "cv_path": "",
+                }
+            else:
+                processed = _process_job(job, settings, status, temp_cv_path=temp_cv)
+
             processed["applied"] = "False"
             processed["scraped_at"] = datetime.now().isoformat()
             new_rows.append({col: str(processed.get(col, "")) for col in COLUMNS})
@@ -301,29 +322,45 @@ def main():
     today = datetime.now().strftime("%Y-%m-%d")
     new_today = df["scraped_at"].str[:10].eq(today).sum()
 
-    m1, m2, m3 = st.columns(3)
+    accepted = (df["ai_verdict"] == "ACCEPT").sum()
+    rejected = (df["ai_verdict"] == "REJECT").sum()
+
+    m1, m2, m3, m4 = st.columns(4)
     m1.metric("Total", total)
-    m2.metric("Processed", int(processed))
-    m3.metric("Recent", int(new_today))
+    m2.metric("Matched", int(accepted))
+    m3.metric("Filtered", int(rejected))
+    m4.metric("Processed", int(processed))
 
     st.divider()
 
     # ── Filters ───────────────────────────────────────────────────────────────
-    fc1, fc2, fc3, fc4 = st.columns(4)
-    with fc1:
+    fr1c1, fr1c2, fr1c3 = st.columns(3)
+    with fr1c1:
+        f_verdict = st.selectbox("Match", ["Accepted only", "All", "Rejected only"])
+    with fr1c2:
+        f_tier = st.selectbox("Tier", ["All", "Tier 1 only", "Other only"])
+    with fr1c3:
         f_status = st.selectbox("Status", ["All", "Pending", "Processed"])
-    with fc2:
+
+    fr2c1, fr2c2, fr2c3 = st.columns(3)
+    with fr2c1:
         sites_in_data = sorted(df["site"].replace("", pd.NA).dropna().unique().tolist())
         sites_display_opts = [_SITE_DISPLAY.get(s, s) for s in sites_in_data]
         f_site_display = st.selectbox("Origin", ["All"] + sites_display_opts)
         f_site = _SITE_REVERSE.get(f_site_display, f_site_display)
-    with fc3:
+    with fr2c2:
         f_search = st.text_input("Filter", "")
-    with fc4:
-        f_tier = st.selectbox("Tier", ["All", "Tier 1 only", "Other only"])
+    with fr2c3:
+        pass  # reserved
 
     view = df.copy().reset_index(drop=True)
     view["tier"] = view["company"].apply(get_tier)
+
+    # Verdict filter (default: accepted only)
+    if f_verdict == "Accepted only":
+        view = view[view["ai_verdict"].isin(["ACCEPT", ""])]
+    elif f_verdict == "Rejected only":
+        view = view[view["ai_verdict"] == "REJECT"]
 
     if f_status == "Processed":
         view = view[view["applied"].apply(_is_applied)]
@@ -344,7 +381,8 @@ def main():
     view = view.reset_index(drop=True)
 
     # ── Table ─────────────────────────────────────────────────────────────────
-    table_cols = ["tier", "title", "company", "location", "date_posted", "site", "applied", "scraped_at"]
+    table_cols = ["ai_verdict", "tier", "title", "company", "location",
+                  "date_posted", "site", "applied", "scraped_at"]
     table_df = view[[c for c in table_cols if c in view.columns]].copy()
     table_df["applied"] = table_df["applied"].apply(_is_applied)
     table_df["scraped_at"] = (
@@ -352,6 +390,10 @@ def main():
         .dt.strftime("%m-%d %H:%M")
         .fillna(table_df["scraped_at"].str[:16])
     )
+    # Convert raw ACCEPT/REJECT to compact symbols
+    table_df["ai_verdict"] = table_df["ai_verdict"].map(
+        {"ACCEPT": "✓", "REJECT": "✗"}
+    ).fillna("—")
 
     st.subheader(f"Entries ({len(table_df)})")
     event = st.dataframe(
@@ -361,6 +403,7 @@ def main():
         selection_mode="single-row",
         on_select="rerun",
         column_config={
+            "ai_verdict":  st.column_config.TextColumn("Match", width="small"),
             "tier":        st.column_config.TextColumn("Tier", width="small"),
             "title":       st.column_config.TextColumn("Title", width="medium"),
             "company":     st.column_config.TextColumn("Organisation", width="medium"),
@@ -424,6 +467,19 @@ def main():
                     file_name=f"FileB_{_safe_filename(job['company'])}.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 )
+
+        # Screening verdict
+        ai_verdict = str(job.get("ai_verdict", ""))
+        if ai_verdict == "ACCEPT":
+            st.success(f"✓ Match  ·  {job.get('ai_confidence', '')} confidence")
+        elif ai_verdict == "REJECT":
+            st.error(f"✗ No match  ·  {job.get('ai_confidence', '')} confidence")
+        ai_reason = str(job.get("ai_reason", "")).strip()
+        if ai_reason:
+            st.caption(ai_reason)
+        ai_flag = str(job.get("ai_flag", "")).strip()
+        if ai_flag:
+            st.caption(f"⚠ {ai_flag}")
 
         st.divider()
         tier_label = get_tier(str(job.get("company", "")))

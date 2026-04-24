@@ -16,6 +16,7 @@ COLUMNS = [
     "site", "search_term", "description",
     "cover_letter_text", "cover_letter_path", "cv_path",
     "applied", "scraped_at",
+    "ai_verdict", "ai_confidence", "ai_reason", "ai_tier", "ai_flag",
 ]
 
 
