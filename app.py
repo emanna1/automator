@@ -33,7 +33,7 @@ from screener import screen_job
 from cover_letter import generate_cover_letter, extract_ats_keywords
 from cv_processor import (
     inject_ats_keywords, save_cover_letter_docx, job_folder,
-    check_base_cv, copy_base_cv_to_temp, url_hash, MARKER,
+    check_base_cv, copy_base_cv_to_temp, url_hash, MARKER, MARKER_VISIBLE,
 )
 
 
@@ -240,15 +240,21 @@ def render_sidebar():
             elif not cv_check["readable"]:
                 st.error(f"Base file unreadable: {cv_check['error']}")
             elif not cv_check["has_marker"]:
-                st.success("Base file: found ✓")
-                st.warning(
-                    f"Marker missing — open the base CV in Word and replace "
-                    f"the placeholder line text with exactly: `{MARKER}`"
+                st.error(
+                    f"Primary marker missing from base file. "
+                    f"Re-download `CV Emilie Quillet v15.docx` from the repository "
+                    f"and set the path to that file."
                 )
             else:
-                st.success("Base file: found ✓  |  marker: found ✓")
+                marker_ok = "✓" if cv_check["has_marker"] else "✗"
+                vis_ok    = "✓" if cv_check["has_marker_visible"] else "✗"
+                st.success(
+                    f"Base file: found ✓  |  "
+                    f"marker (invisible): {marker_ok}  |  "
+                    f"marker (visible): {vis_ok}"
+                )
         else:
-            st.warning("Base file not found — check path above")
+            st.warning("Base file path not set — configure it above")
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
@@ -452,11 +458,13 @@ def main():
                     file_name=f"FileA_{_safe_filename(job['company'])}.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 )
+            _regen_cv_button(job)
         else:
             if not load_settings().get("cv_path"):
                 st.caption("Set base file path in Options to enable processing.")
             else:
                 st.caption("File A not generated yet.")
+                _regen_cv_button(job)
 
         cl_p = str(job.get("cover_letter_path", ""))
         if cl_p and Path(cl_p).exists():
@@ -505,6 +513,10 @@ def main():
                 if not v.get("passed"):
                     failed = [k for k, val in v.items() if k != "passed" and not val]
                     st.caption(f"Failed checks: {', '.join(failed)}")
+                kws = diag.get("keywords", [])
+                if kws:
+                    st.caption("Injected keywords:")
+                    st.code(", ".join(kws), language=None)
 
     with left:
         cover_text = str(job.get("cover_letter_text", "")).strip()
@@ -531,6 +543,33 @@ def main():
         if desc and desc != "nan":
             with st.expander("Summary", expanded=False):
                 st.text(desc[:3000])
+
+
+def _regen_cv_button(job):
+    if st.button("🔄 Regenerate File A", key=f"regen_cv_{job['job_url']}"):
+        settings = load_settings()
+        base_cv = settings.get("cv_path", "")
+        if not base_cv:
+            st.error("Set base file path in Options first.")
+            return
+        with st.spinner("Extracting keywords & rebuilding CV…"):
+            try:
+                keywords = extract_ats_keywords(
+                    job.get("title", ""), job.get("description", "")
+                )
+                temp_cv = copy_base_cv_to_temp(base_cv)
+                date_str = str(job.get("date_posted", ""))[:10].replace("-", "")
+                uhash = url_hash(str(job.get("job_url", "")))
+                folder = job_folder(job["company"], job["title"], date_str, uhash)
+                cv_path_out = str(folder / "cv_modified.docx")
+                diag = inject_ats_keywords(temp_cv, keywords, cv_path_out)
+                if "cv_diagnostics" not in st.session_state:
+                    st.session_state["cv_diagnostics"] = {}
+                st.session_state["cv_diagnostics"][str(job["job_url"])] = diag
+                update_files(job["job_url"], cv_path=cv_path_out)
+                st.rerun()
+            except Exception as e:
+                st.error(f"{type(e).__name__}: {e}")
 
 
 def _regen_button(job, col):
